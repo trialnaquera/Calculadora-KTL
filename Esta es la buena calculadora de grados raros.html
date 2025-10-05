@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Calculadora de tubo — Plano técnico profesional con lupa</title>
+<style>
+:root{
+  --bg:#002663;
+  --card:#fff;
+  --accent:#0b79d0;
+  --reset:#d32f2f;
+}
+body{
+  font-family:system-ui,Segoe UI,Roboto,Arial;
+  margin:0;
+  background:var(--bg);
+  color:#fff;
+}
+.wrap{
+  max-width:1200px;
+  margin:18px auto;
+  padding:18px;
+}
+h1,label,.small,.hint{color:#fff;}
+.grid{
+  display:grid;
+  grid-template-columns:380px 1fr;
+  gap:18px;
+}
+label{display:block;margin-top:8px;font-weight:600;}
+input[type=number], input[type=text]{
+  width:100%; padding:7px; border:1px solid #d8d8d8; border-radius:6px; font-size:14px; box-sizing:border-box;
+  background:#fff;color:#000;
+}
+button{
+  margin-top:12px; padding:8px 12px; border-radius:6px; border:0; background:var(--accent); color:white; cursor:pointer;
+}
+button.secondary{
+  background: var(--reset); color:white;
+}
+#output{
+  margin-top:12px; background:var(--card); padding:12px; border-radius:8px; border:1px solid #e6e6e6; white-space:pre-wrap;
+  font-family:ui-monospace,monospace;color:#000;
+}
+canvas{
+  width:100%; height:480px; background:var(--card); border:1px solid #e1e1e1; border-radius:8px; display:block;
+}
+.small{font-size:13px;color:#fff;}
+.hint{margin-top:8px;font-size:13px;color:#fff;}
+.zoom-controls{
+  margin-top:8px; display:flex; gap:8px;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Calculadora de tubo KTL a grados — Desarrollado por Joaquín Ibáñez Ramos</h1>
+<p class="small">Introduce los datos y pulsa <strong>Calcular</strong>. Opcionalmente ingresa "Desarrollo real" para calcular radio efectivo.</p>
+
+<div class="grid">
+<div>
+<label>1) Longitud primer tramo L1 (mm)</label>
+<input id="L1" type="number" value="" step="0.1">
+
+<label>2) Grados primera curva A1 (°)</label>
+<input id="A1" type="number" value="" step="0.01">
+
+<label>3) Longitud entre curvas L2 (mm)</label>
+<input id="L2" type="number" value="" step="0.1">
+
+<label>4) Grados segunda curva A2 (°)</label>
+<input id="A2" type="number" value="" step="0.01">
+
+<label>5) Longitud último tramo L3 (mm)</label>
+<input id="L3" type="number" value="" step="0.1">
+
+<label>Radio del plano R (mm)</label>
+<input id="R" type="number" value="" step="0.1">
+
+<label>Desarrollo real deseado (opcional, mm)</label>
+<input id="dev_real" type="number" value="">
+
+<div style="display:flex;gap:8px">
+  <button id="btnCalc" type="button">Calcular</button>
+  <button id="btnReset" class="secondary" type="button">Restablecer</button>
+</div>
+
+<div class="zoom-controls">
+  <button id="zoomIn" type="button">🔍 +</button>
+  <button id="zoomOut" type="button">🔍 -</button>
+</div>
+
+<div id="output">Resultados aparecerán aquí.</div>
+</div>
+
+<div>
+<canvas id="canvas" width="1000" height="480"></canvas>
+<div class="hint">Trazado plano gris, efectivo azul punteado. Flechas rojas = cotas, púrpura = ángulos, flechas negras = dirección del flujo.</div>
+</div>
+</div>
+</div>
+
+<script>
+(function(){
+const L1_el=document.getElementById('L1');
+const A1_el=document.getElementById('A1');
+const L2_el=document.getElementById('L2');
+const A2_el=document.getElementById('A2');
+const L3_el=document.getElementById('L3');
+const R_el=document.getElementById('R');
+const dev_real_el=document.getElementById('dev_real');
+const out=document.getElementById('output');
+const btn=document.getElementById('btnCalc');
+const btnReset=document.getElementById('btnReset');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const zoomIn=document.getElementById('zoomIn');
+const zoomOut=document.getElementById('zoomOut');
+
+let zoomLevel=1;
+
+function toRad(d){return d*Math.PI/180;}
+function fmt(v,n=2){return Number(v).toFixed(n);}
+
+// Construye nodos
+function computeNodes(L1,A1,L2,A2,L3,R){
+  let x=0,y=0,ang=0,nodes=[];
+  let nx=x+L1*Math.cos(toRad(ang)),ny=y+L1*Math.sin(toRad(ang));
+  nodes.push({type:'straight',start:{x,y},end:{x:nx,y:ny},length:L1,headingStart:ang,headingEnd:ang});
+  x=nx;y=ny;
+  if(Math.abs(A1)>1e-9){
+    const A=Number(A1),Ar=toRad(A),sign=A>=0?1:-1;
+    const hx=Math.cos(toRad(ang)), hy=Math.sin(toRad(ang));
+    const cx=x+sign*(-hy)*R, cy=y+sign*(hx)*R;
+    const startAng=Math.atan2(y-cy,x-cx), endAng=startAng+Ar;
+    const ex=cx+R*Math.cos(endAng), ey=cy+R*Math.sin(endAng);
+    const len=Math.abs(R*Ar);
+    nodes.push({type:'bend',start:{x,y},end:{x:ex,y:ey},length:len,radius:R,angle:A,arcCenter:{x:cx,y:cy},startAng:startAng,endAng:endAng,headingStart:ang,headingEnd:ang+A});
+    x=ex;y=ey;ang+=A;
+  }
+  nx=x+L2*Math.cos(toRad(ang)), ny=y+L2*Math.sin(toRad(ang));
+  nodes.push({type:'straight',start:{x,y},end:{x:nx,y:ny},length:L2,headingStart:ang,headingEnd:ang});
+  x=nx;y=ny;
+  if(Math.abs(A2)>1e-9){
+    const A=Number(A2),Ar=toRad(A),sign=A>=0?1:-1;
+    const hx=Math.cos(toRad(ang)), hy=Math.sin(toRad(ang));
+    const cx=x+sign*(-hy)*R, cy=y+sign*(hx)*R;
+    const startAng=Math.atan2(y-cy,x-cx), endAng=startAng+Ar;
+    const ex=cx+R*Math.cos(endAng), ey=cy+R*Math.sin(endAng);
+    const len=Math.abs(R*Ar);
+    nodes.push({type:'bend',start:{x,y},end:{x:ex,y:ey},length:len,radius:R,angle:A,arcCenter:{x:cx,y:cy},startAng:startAng,endAng:endAng,headingStart:ang,headingEnd:ang+A});
+    x=ex;y=ey;ang+=A;
+  }
+  nx=x+L3*Math.cos(toRad(ang)), ny=y+L3*Math.sin(toRad(ang));
+  nodes.push({type:'straight',start:{x,y},end:{x:nx,y:ny},length:L3,headingStart:ang,headingEnd:ang});
+  return nodes;
+}
+
+// Desarrollo total
+function totalDevelopment(nodes){return nodes.reduce((s,n)=>s+Math.abs(Number(n.length)||0),0);}
+
+// Dibuja flechas
+function drawArrow(x1,y1,x2,y2,color){
+  const head=15;
+  const dx=x2-x1, dy=y2-y1, angle=Math.atan2(dy,dx);
+  ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x2,y2);
+  ctx.lineTo(x2-head*Math.cos(angle-Math.PI/6),y2-head*Math.sin(angle-Math.PI/6));
+  ctx.lineTo(x2-head*Math.cos(angle+Math.PI/6),y2-head*Math.sin(angle+Math.PI/6));
+  ctx.lineTo(x2,y2); ctx.fill();
+}
+
+// Dibuja cotas
+function drawDimensions(nodes,color){
+  ctx.save();
+  ctx.strokeStyle=color||'red'; ctx.fillStyle=color||'red'; ctx.font='32px Arial'; ctx.lineWidth=3;
+  nodes.forEach(n=>{
+    if(n.type==='straight'){
+      const dx=n.end.x-n.start.x, dy=n.end.y-n.start.y;
+      const mx=(n.start.x+n.end.x)/2, my=(n.start.y+n.end.y)/2;
+      const offsetX=-60, offsetY=-60;
+      drawArrow(n.start.x,n.start.y,mx+offsetX,my+offsetY,color);
+      drawArrow(n.end.x,n.end.y,mx+offsetX,my+offsetY,color);
+      ctx.fillText(n.length.toFixed(1)+' mm', mx+offsetX-10,my+offsetY-10);
+    }
+  });
+  ctx.restore();
+}
+
+// Dibuja ángulos
+function drawAngles(nodes){
+  ctx.save();
+  ctx.fillStyle='purple'; ctx.font='32px Arial';
+  nodes.forEach(n=>{
+    if(n.type==='bend'){
+      ctx.fillText(Math.abs(n.angle).toFixed(1)+'°', n.arcCenter.x+50, n.arcCenter.y);
+    }
+  });
+  ctx.restore();
+}
+
+// Dibuja nodos
+function drawNodes(nodes,color,linewidth,dashed){
+  if(!nodes||nodes.length===0)return;
+  ctx.lineWidth=linewidth||6; ctx.strokeStyle=color||'#333';
+  ctx.setLineDash(dashed?[8,6]:[]);
+  ctx.beginPath();
+  nodes.forEach((n,idx)=>{
+    if(n.type==='straight'){if(idx===0)ctx.moveTo(n.start.x,n.start.y); ctx.lineTo(n.end.x,n.end.y);}
+    else if(n.type==='bend'){
+      const steps=Math.max(60,Math.ceil(Math.abs(n.angle)/1.5));
+      if(idx===0)ctx.moveTo(n.start.x,n.start.y);
+      for(let k=1;k<=steps;k++){
+        const t=n.startAng+(n.endAng-n.startAng)*(k/steps);
+        const px=n.arcCenter.x+n.radius*Math.cos(t);
+        const py=n.arcCenter.y+n.radius*Math.sin(t);
+        ctx.lineTo(px,py);
+      }
+    }
+  });
+  ctx.stroke(); ctx.setLineDash([]);
+}
+
+// Dibuja todo con zoom
+function draw(nodesA,nodesB){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const all=nodesA.concat(nodesB||[]);
+  if(all.length===0)return;
+  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  all.forEach(n=>{[n.start,n.end].forEach(p=>{if(p){minx=Math.min(minx,p.x);miny=Math.min(miny,p.y);maxx=Math.max(maxx,p.x);maxy=Math.max(maxy,p.y);}}); if(n.arcCenter){minx=Math.min(minx,n.arcCenter.x);miny=Math.min(miny,n.arcCenter.y); maxx=Math.max(maxx,n.arcCenter.x); maxy=Math.max(maxy,n.arcCenter.y);}});
+  const worldW=maxx-minx, worldH=maxy-miny, pad=150;
+  const scale=Math.min((canvas.width-2*pad)/worldW,(canvas.height-2*pad)/worldH)*zoomLevel;
+  const offsetX=(canvas.width-(worldW*scale))/2-minx*scale;
+  const offsetY=(canvas.height-(worldH*scale))/2-miny*scale;
+  ctx.save(); ctx.setTransform(scale,0,0,scale,offsetX,offsetY);
+
+  drawNodes(nodesA,'#666',6,false); drawDimensions(nodesA,'red'); drawAngles(nodesA);
+  if(nodesB){drawNodes(nodesB,'#0b79d0',6,true); drawDimensions(nodesB,'blue'); drawAngles(nodesB);}
+  ctx.restore();
+}
+
+// Calculo principal
+function calcular(){
+  const L1=Number(L1_el.value)||0, A1=Number(A1_el.value)||0, L2=Number(L2_el.value)||0, A2=Number(A2_el.value)||0, L3=Number(L3_el.value)||0;
+  const R=Number(R_el.value)||0, devReal=dev_real_el.value===''?null:Number(dev_real_el.value);
+  const nodesPlano=computeNodes(L1,A1,L2,A2,L3,R), devPlano=totalDevelopment(nodesPlano);
+  let text=`Cálculo con R plano = ${fmt(R)} mm\nArco1 (|A1|=${Math.abs(A1)}°): ${fmt(Math.abs(R*toRad(A1)))} mm\nArco2 (|A2|=${Math.abs(A2)}°): ${fmt(Math.abs(R*toRad(A2)))} mm\nSum rectas = ${fmt(L1+L2+L3)} mm\nDesarrollo (R plano) = ${fmt(devPlano)} mm\nCoordenada final (R plano) = (${fmt(nodesPlano[nodesPlano.length-1].end.x)},${fmt(nodesPlano[nodesPlano.length-1].end.y)}) mm\n`;
+  let nodesEff=null;
+  if(devReal!==null&&!isNaN(devReal)){
+    const sumRect=L1+L2+L3, thetaSum=Math.abs(toRad(A1))+Math.abs(toRad(A2));
+    if(thetaSum>1e-9){
+      const R_eff=(devReal-sumRect)/thetaSum;
+      text+=`\nDesarrollo objetivo = ${fmt(devReal)} mm\nRadio efectivo necesario = ${fmt(R_eff)} mm\nDiferencia ΔR = ${fmt(R_eff-R)} mm`;
+      nodesEff=computeNodes(L1,A1,L2,A2,L3,R_eff);
+      const devEffCheck=totalDevelopment(nodesEff);
+      text+=`\nDesarrollo comprobación (R_eff) = ${fmt(devEffCheck)} mm\nCoordenada final (R_eff) = (${fmt(nodesEff[nodesEff.length-1].end.x)},${fmt(nodesEff[nodesEff.length-1].end.y)}) mm\n`;
+    }else{text+='\nNo hay ángulos para calcular radio efectivo.\n';}
+  }
+  out.textContent=text;
+  draw(nodesPlano,nodesEff);
+}
+
+btn.addEventListener('click',calcular);
+btnReset.addEventListener('click',function(){
+  [L1_el,A1_el,L2_el,A2_el,L3_el,R_el,dev_real_el].forEach(i=>i.value='');
+  out.textContent='Resultados aparecerán aquí.';
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+});
+
+zoomIn.addEventListener('click',function(){zoomLevel*=1.2; calcular();});
+zoomOut.addEventListener('click',function(){zoomLevel/=1.2; calcular();});
+
+window.addEventListener('load',calcular);
+[L1_el,A1_el,L2_el,A2_el,L3_el,R_el,dev_real_el].forEach(inp=>inp.addEventListener('keydown',function(ev){if(ev.key==='Enter'){ev.preventDefault();calcular();}}));
+
+})();
+</script>
+</body>
+</html>
